@@ -104,7 +104,7 @@
 #define  SL811HS_INTMASK_USB_A        (1 << 0)
 
 #define SL811HS_HWREVISION      0xe     /* On Read */
-#define   SL811HS_HWREVISION_2_0        0x20
+#define   SL811HS_HWREVISION_1_5        0x20
 
 #define SL811HS_SOFLOW          0xe     /* On Write */
 

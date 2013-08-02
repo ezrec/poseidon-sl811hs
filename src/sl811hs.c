@@ -1962,10 +1962,24 @@ struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq)
 {
     struct sl811hs *sl;
 
+#if DEBUG < 1
+    /* A tiny bit of sanity checking */
+    if (addr == NULL || data == NULL || addr == data)
+        return NULL;
+#endif
+
     sl = AllocMem(sizeof(*sl), MEMF_ANY | MEMF_CLEAR);
     sl->sl_Addr = (volatile UBYTE *)addr;
     sl->sl_Data = (volatile UBYTE *)data;
     sl->sl_Irq = irq;
+
+    /* Quick check to verify that the device is even there */
+    resume(sl);
+    if ((rb(sl, SL811HS_HWREVISION) & 0xfc) != SL811HS_HWREVISION_1_5) {
+        D(bug("%s: Can't detect SL811HS v1.5 at $%0x/$%0x\n", __func__, addr, data));
+        FreeMem(sl, sizeof(*sl));
+        return NULL;
+    }
 
     NEWLIST(&sl->sl_PacketsActive);
     NEWLIST(&sl->sl_XfersFree);
