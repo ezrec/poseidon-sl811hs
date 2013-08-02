@@ -115,6 +115,9 @@
 #define  SL811HS_CONTROL2_LOW_SPEED     (1 << 6)
 #define  SL811HS_CONTROL2_SOF_HIGH(x)   ((x) & 0x3f)
 
+/* This is a 'struct Node' internally,
+ * so feel free to use it in a list.
+ */
 struct sl811hs;
 
 struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq);

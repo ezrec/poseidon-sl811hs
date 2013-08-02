@@ -74,7 +74,7 @@
 #define IOF_ABORT               (1 << 7)
 
 struct sl811hs {
-    struct Node sl_Node;
+    struct Node sl_Node;        /* For public use by that which allocates us */
 
     /* Clockport Interface */
     int sl_Irq;
@@ -1504,7 +1504,7 @@ static void sl811hs_CommandTask(void)
                 sl->sl_Interrupt.is_Code = (VOID (*)())sl811hs_IntServer;
                 D2(bug("%s: Initializing IRQ handler (IRQ %d, handler %p)\n", __func__, sl->sl_Irq, &sl->sl_Interrupt));
 #if DEBUG
-                if (sl->sl_Irq == (ULONG)-1)
+                if (sl->sl_Addr == NULL)
                     sl811hs_sim_Init(&sl->sl_Sim, &sl->sl_Interrupt);
                 else
 #endif
@@ -1757,7 +1757,7 @@ static void sl811hs_CommandTask(void)
                 /* Shut down interrupts */
                 wb(sl, SL811HS_INTENABLE, 0);
 #if DEBUG
-                if (sl->sl_Irq != (ULONG)-1)
+                if (sl->sl_Addr != NULL)
 #endif
                     RemIntServer(sl->sl_Irq, &sl->sl_Interrupt);
 

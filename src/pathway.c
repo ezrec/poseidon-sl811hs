@@ -23,6 +23,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <aros/debug.h>
 #include <proto/exec.h>
 
 #include <hardware/intbits.h>
@@ -31,17 +32,18 @@
 #include "pathway_intern.h"
 
 
-/* Currently only one clockport
+/* Unit numbers 0..15 are reserved for
+ * clockports at fixed locations.
+ *
+ * Unit number 16 is the debug (simulation) unit,
+ * which has a Mass Storage Bulk-only simulation.
  */
-struct pathway_base { ULONG base; LONG irq; } pb_Base[] = {
-    { 0xd80001, INTB_EXTER },  /* A1200 clockport */
-    { 0xd84001, INTB_EXTER },  /* Zorro IV */
-    { 0xd88001, INTB_EXTER },  /* Zorro IV */
-    { 0xd8c001, INTB_EXTER },  /* Zorro IV */
-    { 0xd90001, INTB_EXTER },  /* A604 2nd port */
-#if DEBUG
-    { 0, (ULONG)-1 },         /* Debug unit */
-#endif
+struct pathway_base { ULONG addr; ULONG data; LONG irq; } pb_Base[17] = {
+    { 0xd80001, 0xd80005, INTB_EXTER },  /* Unit 0: A1200 clockport */
+    { 0xd84001, 0xd84005, INTB_EXTER },  /* Unit 1: Zorro IV */
+    { 0xd88001, 0xd88005, INTB_EXTER },  /* Unit 2: Zorro IV */
+    { 0xd8c001, 0xd8c005, INTB_EXTER },  /* Unit 3: Zorro IV */
+    { 0xd90001, 0xd90005, INTB_EXTER },  /* Unit 4: A604 2nd port */
 };
 
 #ifndef ARRAY_SIZE
@@ -51,6 +53,7 @@ struct pathway_base { ULONG base; LONG irq; } pb_Base[] = {
 static int pathway_Init(struct PathwayBase *pb)
 {
 #if DEBUG
+    /* Nasty hack to dump serial debug at 115200n81 */
 #ifdef __mc68000
 #define SERPER_BASE_NTSC 3579545
 #define SERPER_BASE_PAL 3546895
@@ -115,7 +118,20 @@ static int pathway_Open(struct PathwayBase *pb, struct IORequest *io, ULONG unit
 
     ObtainSemaphore(&pb->pb_UnitLock);
     if (pb->pb_Unit[unitnum] == NULL) {
-        pb->pb_Unit[unitnum] = sl811hs_Attach(pb_Base[unitnum].base, pb_Base[unitnum].base+4, pb_Base[unitnum].irq);
+        ULONG addr, data;
+        ULONG irq;
+        addr = pb_Base[unitnum].addr;
+        data = pb_Base[unitnum].data;
+        irq  = pb_Base[unitnum].irq;
+        if (unitnum == 16) {
+            addr = data = 0;
+            irq = 0;
+        } else if (addr == 0) {
+            D(bug("%s: Unit %d not configured\n", __func__, unitnum));
+            irq = (ULONG)-1;
+        }
+        if (irq != (ULONG)-1)
+            pb->pb_Unit[unitnum] = sl811hs_Attach(addr, data, irq);
     }
     sl = pb->pb_Unit[unitnum];
     ReleaseSemaphore(&pb->pb_UnitLock);
