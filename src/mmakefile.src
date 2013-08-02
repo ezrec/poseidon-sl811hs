@@ -1,0 +1,25 @@
+# pathway.device build file, for AROS 
+# 
+include $(TOP)/config/make.cfg
+
+FILES := pathway sl811hs sl811hs_sim massbulk_sim
+
+#MM- workbench-c-m68k: workbench-c-m68k-pathway
+
+#MM- workbench-c-m68k-quick: workbench-c-m68k-pathway-quick
+
+USER_CFLAGS := -DADATE="\"$(shell date "+%d.%m.%Y")\"" \
+               -D__EXEC_LIBAPI__=36
+
+USER_CFLAGS += -DDEBUG=1
+
+%build_module mmake=kernel-amiga-m68k-pathway \
+       modname=pathway modtype=device \
+       moduledir=Devs/USBHardware \
+       files="$(FILES)"
+
+%build_progs mmake=workbench-c-m68k-pathway \
+    files=PathwayDiag targetdir=$(AROS_C) \
+    usestartup=no
+
+%common
