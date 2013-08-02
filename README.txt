@@ -6,7 +6,11 @@ Poseidon support for SL811HS based devices
 * THIS DRIVER IS PRE-RELEASE, AND WILL CORRUPT DATA! *
 ******************************************************
 
-This driver suppors the Pathway (Clockport) board.
+This driver suppors the Pathway (Clockport) and Thylacine (Zorro) boards.
+
+Use thylacine.device for Thylacine boards. Device unit numbers correspond
+to the Zorro board order (ie Unit 0 for the first detected Thylacine,
+Unit 1 for the next, etc).
 
 Use pathway.device for Pathway clockport USB adapters.
 Unit numbers are as follows:

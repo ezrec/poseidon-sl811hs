@@ -130,8 +130,14 @@ static int pathway_Open(struct PathwayBase *pb, struct IORequest *io, ULONG unit
             D(bug("%s: Unit %d not configured\n", __func__, unitnum));
             irq = (ULONG)-1;
         }
-        if (irq != (ULONG)-1)
+        if (irq != (ULONG)-1) {
             pb->pb_Unit[unitnum] = sl811hs_Attach(addr, data, irq);
+            if (pb->pb_Unit[unitnum]) {
+                struct Node *n = (struct Node *)pb->pb_Unit[unitnum];
+                n->ln_Pri = unitnum;
+                n->ln_Name = "pathway.device";
+            }
+        }
     }
     sl = pb->pb_Unit[unitnum];
     ReleaseSemaphore(&pb->pb_UnitLock);

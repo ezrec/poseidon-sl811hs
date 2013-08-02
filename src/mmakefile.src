@@ -2,22 +2,37 @@
 # 
 include $(TOP)/config/make.cfg
 
-FILES := pathway sl811hs sl811hs_sim massbulk_sim
-
-#MM- workbench-c-m68k: workbench-c-m68k-pathway
-
-#MM- workbench-c-m68k-quick: workbench-c-m68k-pathway-quick
+#MM- workbench-c-m68k: workbench-c-m68k-sl811hs
+#MM- workbench-c-m68k-sl811hs: workbench-c-m68k-thylacine
 
 USER_CFLAGS := -DADATE="\"$(shell date "+%d.%m.%Y")\"" \
                -D__EXEC_LIBAPI__=36
 
 USER_CFLAGS += -DDEBUG=1
 
+#MM- kernel-amiga-m68k-sl811hs: kernel-amiga-m68k-pathway
+#MM- kernel-amiga-m68k-sl811hs-quick: kernel-amiga-m68k-pathway-quick
+
+FILES := pathway sl811hs sl811hs_sim massbulk_sim
+
 %build_module mmake=kernel-amiga-m68k-pathway \
        modname=pathway modtype=device \
        moduledir=Devs/USBHardware \
        files="$(FILES)"
 
+#MM- kernel-amiga-m68k-sl811hs: kernel-amiga-m68k-thylacine
+#MM- kernel-amiga-m68k-sl811hs-quick: kernel-amiga-m68k-thylacine-quick
+
+FILES := thylacine sl811hs sl811hs_sim massbulk_sim
+
+%build_module mmake=kernel-amiga-m68k-thylacine \
+       modname=thylacine modtype=device \
+       moduledir=Devs/USBHardware \
+       files="$(FILES)"
+
+#MM- workbench-c-m68k-sl811hs: workbench-c-m68k-pathway
+#MM- workbench-c-m68k-sl811hs-quick: workbench-c-m68k-pathway-quick
+#
 %build_progs mmake=workbench-c-m68k-pathway \
     files=PathwayDiag targetdir=$(AROS_C) \
     usestartup=no
