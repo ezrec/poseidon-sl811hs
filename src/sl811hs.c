@@ -560,14 +560,18 @@ static BYTE sl811hs_XferStatus(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
         D(ebug("%p DATA%d NAK %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
         err = UHIOERR_NAK;
     } else if (status & SL811HS_HOSTSTATUS_ACK) {
-        if (!(xfer->ctl & SL811HS_HOSTCTRL_ISO))
-            sl811hs_ToggleFlip(sl, xfer->iou);
+        int seq = (status & SL811HS_HOSTSTATUS_SEQ) ? 1 : 0;
         err = 0;
-        if ((xfer->ctl & SL811HS_HOSTCTRL_DIR) && (status & SL811HS_HOSTSTATUS_SEQ)) {
-            D(ebug("%p DATA%d SEQ %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
+        if ((xfer->ctl & SL811HS_HOSTCTRL_DIR) && seq) {
+            D(ebug("%p DATA%d OUT SEQ %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
+            D2(for (;;));
+        } else if (!(xfer->ctl & SL811HS_HOSTCTRL_DIR) && (seq != data)) {
+            D(ebug("%p DATA%d IN SEQ %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
             D2(for (;;));
         } else {
             D2(ebug("%p DATA%d ACK %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
+            if (!(xfer->ctl & SL811HS_HOSTCTRL_ISO))
+                sl811hs_ToggleFlip(sl, xfer->iou);
         }
     } else {
         D(ebug("%p DATA%d HOSTSTATUS %02x?!\n", iou, data, status));
