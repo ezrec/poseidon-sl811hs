@@ -1165,29 +1165,29 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
         D2(ebug("GetDescriptor: %d [%d]\n", (value>>8) & 0xff, index));
         switch ((value>>8) & 0xff) {
         case UDT_DEVICE:
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_DevDesc), &sl811hs_DevDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_DevDesc), &sl811hs_DevDesc);
             break;
         case UDT_CONFIGURATION:
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_CfgDesc), &sl811hs_CfgDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_CfgDesc), &sl811hs_CfgDesc);
             if (err == 0 && length > 0)
-                err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_IntDesc), &sl811hs_IntDesc);
+                err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_IntDesc), &sl811hs_IntDesc);
             if (err == 0 && length > 0)
-                err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_EPDesc), &sl811hs_EPDesc);
+                err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_EPDesc), &sl811hs_EPDesc);
             if (err == 0 && length > 0)
-                err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
+                err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
             break;
         case UDT_INTERFACE:
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_IntDesc), &sl811hs_IntDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_IntDesc), &sl811hs_IntDesc);
             break;
         case UDT_ENDPOINT:
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_EPDesc), &sl811hs_EPDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_EPDesc), &sl811hs_EPDesc);
             break;
         case UDT_HUB:
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
             break;
         case UDT_STRING:
             if ((value & 0xff) < 3) {
-                err = sl811hs_AppendData(iou, &length, sl811hs_StrDesc[value & 0xff].bLength, &sl811hs_StrDesc[value & 0xff]);
+                err = sl811hs_AppendData(sl, iou, &length, sl811hs_StrDesc[value & 0xff].bLength, &sl811hs_StrDesc[value & 0xff]);
             }
             break;
         default:
@@ -1198,7 +1198,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
     case CTLREQ(URTF_IN | URTF_STANDARD | URTF_DEVICE, USR_GET_CONFIGURATION):
         D2(ebug("GetConfiguration: %d [%d]\n", value, index));
         buff[0] = sl->sl_RootConfiguration;
-        err = sl811hs_AppendData(iou, &length, 1, buff);
+        err = sl811hs_AppendData(sl, iou, &length, 1, buff);
         break;
     case CTLREQ(URTF_OUT | URTF_STANDARD | URTF_DEVICE, USR_SET_CONFIGURATION):
         D2(ebug("SetConfiguration: %d [%d]\n", value, index));
@@ -1212,7 +1212,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
         if (value == 0 && index == 0) {
             buff[0] = 1;        /* Self Powered */
             buff[1] = 0;
-            err = sl811hs_AppendData(iou, &length, 2, buff);
+            err = sl811hs_AppendData(sl, iou, &length, 2, buff);
         }
         break;
     case CTLREQ(URTF_IN | URTF_STANDARD | URTF_INTERFACE, USR_GET_STATUS): /* GetStatus */
@@ -1220,7 +1220,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
         if (value == 0 && index == 0) {
             buff[0] = 0;        
             buff[1] = 0;
-            err = sl811hs_AppendData(iou, &length, 2, buff);
+            err = sl811hs_AppendData(sl, iou, &length, 2, buff);
         }
         break;
     case CTLREQ(URTF_IN | URTF_STANDARD | URTF_ENDPOINT, USR_GET_STATUS): /* GetStatus */
@@ -1228,7 +1228,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
         if (value == 0 && index == 0) {
             buff[0] = 0;        /* Not halted */ 
             buff[1] = 0;
-            err = sl811hs_AppendData(iou, &length, 2, buff);
+            err = sl811hs_AppendData(sl, iou, &length, 2, buff);
         }
         break;
      case CTLREQ(URTF_OUT | URTF_CLASS | URTF_DEVICE, USR_CLEAR_FEATURE): /* ClearHubFeature */
@@ -1267,7 +1267,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
     case CTLREQ(URTF_IN  | URTF_CLASS | URTF_DEVICE, USR_GET_DESCRIPTOR): /* GetHubDescriptor */
         if (index == 0) {
             D2(ebug("GetHubDescriptor: %d [%d]\n", value, index));
-            err = sl811hs_AppendData(iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
+            err = sl811hs_AppendData(sl, iou, &length, sizeof(sl811hs_HubDesc), &sl811hs_HubDesc);
         }
         break;
     case CTLREQ(URTF_IN  | URTF_CLASS | URTF_DEVICE, USR_GET_STATUS): /* GetHubStatus */
@@ -1277,7 +1277,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
             buff[1] = 0;
             buff[2] = 0; /* C_HUB_LOCAL_POWER, C_HUB_OVER_CURRENT */
             buff[3] = 0;
-            err = sl811hs_AppendData(iou, &length, 4, buff);
+            err = sl811hs_AppendData(sl, iou, &length, 4, buff);
         }
         break;
     case CTLREQ(URTF_IN  | URTF_CLASS | URTF_OTHER,  USR_GET_STATUS): /* GetPortStatus/GetBusState */
@@ -1287,7 +1287,7 @@ static BYTE sl811hs_ControlXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou)
             buff[1] = (sl->sl_PortStatus >> 8) & 0xff;
             buff[2] = (sl->sl_PortChange >> 0) & 0xff;
             buff[3] = (sl->sl_PortChange >> 8) & 0xff;
-            err = sl811hs_AppendData(iou, &length, 4, buff);
+            err = sl811hs_AppendData(sl, iou, &length, 4, buff);
         } else
             err = UHIOERR_STALL;
         break;
@@ -1336,7 +1336,7 @@ static BYTE sl811hs_InterruptXferRoot(struct sl811hs *sl, struct IOUsbHWReq *iou
 
     if (iou->iouh_Endpoint == 1) {
         if (sl->sl_PortChange)
-            err = sl811hs_AppendData(iou, &length, 1, &port_one);
+            err = sl811hs_AppendData(sl, iou, &length, 1, &port_one);
         else
             err = UHIOERR_NAK;
     }
