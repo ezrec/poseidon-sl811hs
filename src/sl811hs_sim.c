@@ -124,11 +124,11 @@ void  sl811hs_sim_Write(struct sl811hs_sim *ss, int a0, UBYTE val)
             if (isArmed & isEnabled) {
                 UBYTE buff[256];
                 UBYTE ctl = ss->ss_Reg[SL811HS_HOSTCTRL+i];
-                int ep  = SL811HS_HOSTID_PID_of(ss->ss_Reg[SL811HS_HOSTID+i]);
+                int ep  = SL811HS_HOSTID_EP_of(ss->ss_Reg[SL811HS_HOSTID+i]);
                 UBYTE pid = SL811HS_HOSTID_PID_of(ss->ss_Reg[SL811HS_HOSTID+i]);
-                D(bug("%s: Send USB%c command\n", __func__, i ? 'B' : 'A'));
                 buff[0] = ss->ss_Reg[SL811HS_HOSTDEVICEADDR] | ((ep & 1) << 7);
                 buff[1] = ((ep & 0xe) << 4) | 0;    /* CRC5 is ignored */
+                D(bug("%s: Send USB%c command %02x %02x\n", __func__, i ? 'B' : 'A', buff[0], buff[1]));
                 usbsim_Out(ss->ss_Port, pid, buff, 2);
                 switch (pid) {
                 case PID_SETUP:
