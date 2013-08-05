@@ -350,7 +350,7 @@ static void massbulk_Out(struct USBSim *sim, UBYTE pid, const UBYTE *buff, size_
     int i;
     struct massbulk_Endpoint *ep;
 
-    if (pid != PID_DATA0 && pid != PID_DATA1) {
+    if (pid == PID_SETUP || pid == PID_OUT || pid == PID_IN) {
         int epid;
 
         epid = ((buff[1] >> 4) & 0xe) | ((buff[0] >> 7) & 1);
