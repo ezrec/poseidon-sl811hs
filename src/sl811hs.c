@@ -114,6 +114,8 @@ struct sl811hs {
     UBYTE sl_RootDevAddr;
     UBYTE sl_RootConfiguration;
 
+    struct MinList sl_NakTimersFree;    /* Free NAK timers */
+    struct MinList sl_PacketsDelayed;   /* Running NAK timers */
     struct MinList sl_PacketsActive;     /* Packets waiting for a transaction */
     struct MinList sl_XfersCompleted;    /* Xfers holding done packets */
     struct MinList sl_XfersFree;        /* Xfers available */
@@ -1369,11 +1371,12 @@ static inline LONG sl811hs_State(struct sl811hs *sl)
     return sl->sl_State;
 }
 
-struct sl811hs_Nak {
+struct sl811hs_NakTimer {
     struct timerequest tr;
     struct IOUsbHWReq *iou;
     ULONG time;         /* in uFrames */
     ULONG interval;     /* in uFrames */
+    int error;          /* error count */
 };
 
 #define UFRAME2MS(x)    ((x)/8)
@@ -1382,7 +1385,7 @@ struct sl811hs_Nak {
 
 static void sl811hs_ReplyOrRetry(struct sl811hs *sl, struct IOUsbHWReq *iou)
 {
-    struct sl811hs_Nak *nak;
+    struct sl811hs_NakTimer *nak;
 
     do {
         if (iou->iouh_Req.io_Command < CMD_NONSTD)
@@ -1395,39 +1398,67 @@ static void sl811hs_ReplyOrRetry(struct sl811hs *sl, struct IOUsbHWReq *iou)
             break;
         }
 
-        /* Handle non-NAK/non-TIMEOUT error codes
+        /* Handle non-NAK error codes
          */
         if (iou->iouh_Req.io_Error != UHIOERR_NAK) {
             if (iou->iouh_DriverPrivate2) {
                 D2(ebug("%p Clear iouh_DriverPrivate2\n", iou));
-                FreeMem(iou->iouh_DriverPrivate2, sizeof(*nak));
+                nak = (struct sl811hs_NakTimer *)iou->iouh_DriverPrivate2;
+                AbortIO((struct IORequest *)nak);
+                WaitIO((struct IORequest *)nak);
+                nak->iou = NULL;
                 iou->iouh_DriverPrivate2 = NULL;
+                AddTail((struct List *)&sl->sl_NakTimersFree, (struct Node *)nak);
+                nak = NULL;
             }
             break;
         }
 
         /* From here on, we are in a NAK or Retry */
         if (iou->iouh_DriverPrivate2 == NULL) {
-            nak = AllocMem(sizeof(*nak), MEMF_ANY);
-            /* Clone the request from the main thread */
-            CopyMem(sl->sl_TimeRequest, &nak->tr, sizeof(struct timerequest));
-            iou->iouh_DriverPrivate2 = nak;
-            nak->iou = iou;
-            nak->interval = iou->iouh_Interval;
-            nak->time = 0;
-            if (sl->sl_PortStatus & (1 << PORT_LOW_SPEED))
-                nak->interval = MS2UFRAME(nak->interval);
-            if (nak->interval == 0)
-                nak->interval = MS2UFRAME(iou->iouh_NakTimeout) / 16;
-            if (nak->interval == 0)
-                nak->interval = DEFAULT_INTERVAL;
+            nak = (struct sl811hs_NakTimer *)RemHead((struct List *)&sl->sl_NakTimersFree);
+            if (nak == NULL) {
+                /* Allocate a new timer, and clone the request from the main thread */
+                nak = AllocMem(sizeof(*nak), MEMF_ANY);
+                if (nak != NULL) { 
+                    CopyMem(sl->sl_TimeRequest, &nak->tr, sizeof(struct timerequest));
+                }
+            }
+            if (nak != NULL) {
+                iou->iouh_DriverPrivate2 = nak;
+                nak->iou = iou;
+                nak->interval = iou->iouh_Interval;
+                nak->time = 0;
+                nak->error = 1;
+                if (sl->sl_PortStatus & (1 << PORT_LOW_SPEED))
+                    nak->interval = MS2UFRAME(nak->interval);
+                if (nak->interval == 0)
+                    nak->interval = MS2UFRAME(iou->iouh_NakTimeout) / 16;
+                if (nak->interval == 0)
+                    nak->interval = DEFAULT_INTERVAL;
+            }
         } else {
+            BOOL done = FALSE;
             nak = iou->iouh_DriverPrivate2;
-            if ((iou->iouh_Flags & UHFF_NAKTIMEOUT) &&
-                (UFRAME2MS(nak->time) > iou->iouh_NakTimeout)) {
-                FreeMem(nak, sizeof(*nak));
+            if (iou->iouh_Flags & UHFF_NAKTIMEOUT) {
+                if (iou->iouh_NakTimeout && (UFRAME2MS(nak->time) > iou->iouh_NakTimeout)) {
+                    D2(ebug("%p timed out after %sms\n", iou, UFRAME2MS(nak->time)));
+                    done = TRUE;
+                }
+            } else {
+                nak->error++;
+                if (nak->error > 3) {
+                    D2(ebug("%p received 3 NAKs\n", iou));
+                    done = TRUE;
+                }
+            }
+            if (done) {
+                AbortIO((struct IORequest *)nak);
+                WaitIO((struct IORequest *)nak);
+                nak->iou = NULL;
+                AddTail((struct List *)&sl->sl_NakTimersFree, (struct Node *)nak);
                 iou->iouh_DriverPrivate2 = NULL;
-                iou->iouh_Req.io_Error = UHIOERR_NAKTIMEOUT;
+                iou->iouh_Req.io_Error = ((iou->iouh_Flags & UHFF_NAKTIMEOUT)) ? UHIOERR_NAKTIMEOUT : UHIOERR_NAK;
                 break;
             }
         }
@@ -1437,6 +1468,7 @@ static void sl811hs_ReplyOrRetry(struct sl811hs *sl, struct IOUsbHWReq *iou)
             nak->tr.tr_time.tv_micro = UFRAME2US(nak->interval) % 1000000;
             nak->tr.tr_node.io_Command = TR_ADDREQUEST;
             D(ebug("%p NAK, retry in %d ms, %d ms left (%d frames waited)\n", iou, UFRAME2MS(nak->interval), (iou->iouh_Flags & UHFF_NAKTIMEOUT) ? (iou->iouh_NakTimeout - UFRAME2MS(nak->time)) : -1, nak->time));
+            AddTail((struct List *)&sl->sl_PacketsDelayed, (struct Node *)nak->iou);
             SendIO((struct IORequest *)nak);
             return;
         }
@@ -1453,9 +1485,9 @@ static void sl811hs_ReplyOrRetry(struct sl811hs *sl, struct IOUsbHWReq *iou)
  */
 static struct IOUsbHWReq *sl811hs_GetNak(struct sl811hs *sl)
 {
-    struct sl811hs_Nak *nak;
+    struct sl811hs_NakTimer *nak;
 
-    nak = (struct sl811hs_Nak *)GetMsg(sl->sl_TimeRequest->tr_node.io_Message.mn_ReplyPort);
+    nak = (struct sl811hs_NakTimer *)GetMsg(sl->sl_TimeRequest->tr_node.io_Message.mn_ReplyPort);
     if (!nak)
         return NULL;
 
@@ -1541,6 +1573,8 @@ static void sl811hs_CommandTask(void)
                      */
                     if (sigset & sigftime) {
                         while ((iou = sl811hs_GetNak(sl))) {
+                            /* Move to the sl_PacketsReady list */
+                            Remove((struct Node *)iou);
                             AddTail((struct List *)&todo, (struct Node *)iou);
                         }
                     }
@@ -1780,6 +1814,27 @@ static void sl811hs_CommandTask(void)
 
                 FreeSignal(sl->sl_SigDone);
 
+                /* Abort any delayed packets */
+                if (GetHead(&sl->sl_PacketsDelayed)) {
+                    while ((iou = (struct IOUsbHWReq *)RemHead((struct List *)&sl->sl_PacketsDelayed))) {
+                        struct sl811hs_NakTimer *nak;
+                        nak = (struct sl811hs_NakTimer *)iou->iouh_DriverPrivate2;
+                        AbortIO((struct IORequest *)nak);
+                        WaitIO((struct IORequest *)nak);
+                        nak->iou = NULL;
+                        iou->iouh_Req.io_Error = IOERR_ABORTED;
+                        ReplyMsg((struct Message *)iou);
+                        AddTail((struct List *)&sl->sl_NakTimersFree, (struct Node *)nak);
+                    }
+                }
+
+                /* Purge any NakTimers we may have allocated */
+                if (GetHead(&sl->sl_NakTimersFree)) {
+                    struct sl811hs_NakTimer *nak;
+                    while ((nak = (struct sl811hs_NakTimer *)RemHead((struct List *)&sl->sl_NakTimersFree))) 
+                        FreeMem(nak, sizeof(*nak));
+                }
+
                 CloseDevice((struct IORequest *)tr);
             }
             DeleteIORequest((struct IORequest *)tr);
@@ -1998,6 +2053,8 @@ struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq)
         return NULL;
     }
 
+    NEWLIST(&sl->sl_NakTimersFree);
+    NEWLIST(&sl->sl_PacketsDelayed);
     NEWLIST(&sl->sl_PacketsActive);
     NEWLIST(&sl->sl_XfersFree);
     NEWLIST(&sl->sl_XfersActive);
