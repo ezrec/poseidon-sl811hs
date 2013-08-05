@@ -115,9 +115,9 @@ struct sl811hs {
     UBYTE sl_RootConfiguration;
 
     struct MinList sl_PacketsActive;     /* Packets waiting for a transaction */
-    struct MinList sl_XfersFree;         /* Xfers available */
-    struct MinList sl_XfersActive;       /* Xfers in-flight */
     struct MinList sl_XfersCompleted;    /* Xfers holding done packets */
+    struct MinList sl_XfersFree;        /* Xfers available */
+    struct MinList sl_XfersActive;      /* Xfers in-flight */
 
     struct sl811hs_Xfer {
         struct MinNode node;
@@ -348,8 +348,10 @@ static void sl811hs_XferIssue(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
             wn(sl, *data);
     }
 
-   
+  
+    Disable();
     AddTail((struct List *)&sl->sl_XfersActive, (struct Node *)xfer);
+    Enable();
 
     wb(sl, xfer->ab + SL811HS_HOSTBASE, xfer->base);
     wn(sl, xfer->len);
@@ -387,14 +389,18 @@ AROS_INTH1(sl811hs_IntServer, struct sl811hs *, sl)
     }
 
     if (status & SL811HS_INTMASK_USB_A) {
-        Remove((struct Node *)&sl->sl_Xfer[0]);
-        AddTail((struct List *)&sl->sl_XfersCompleted, (struct Node *)&sl->sl_Xfer[0]);
+        if (sl->sl_Xfer[0].iou != NULL) {
+            Remove((struct Node *)&sl->sl_Xfer[0]);
+            AddTail((struct List *)&sl->sl_XfersDone, (struct Node *)&sl->sl_Xfer[0]);
+        }
     }
 
 #ifdef ENABLE_B
     if (status & SL811HS_INTMASK_USB_B) {
-        Remove((struct Node *)&sl->sl_Xfer[1]);
-        AddTail((struct List *)&sl->sl_XfersCompleted, (struct Node *)&sl->sl_Xfer[1]);
+        if (sl->sl_Xfer[1].iou != NULL) {
+            Remove((struct Node *)&sl->sl_Xfer[1]);
+            AddTail((struct List *)&sl->sl_XfersDone, (struct Node *)&sl->sl_Xfer[1]);
+        }
     }
 #endif
 
@@ -934,6 +940,7 @@ BYTE sl811hs_ResetUSB(struct sl811hs *sl, BOOL inReset)
             wb(sl, SL811HS_HOSTCTRL + 8, 0);
         }
 
+        sl->sl_Xfer[0].iou = NULL;
         wb(sl, SL811HS_INTENABLE, SL811HS_INTMASK_CHANGED |
                                   SL811HS_INTMASK_USB_B |
                                   SL811HS_INTMASK_USB_A);
