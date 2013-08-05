@@ -1114,7 +1114,7 @@ struct UsbHubDesc const sl811hs_HubDesc = {
     .PortPwrCtrlMask = 0xff,
 };
 
-static int sl811hs_AppendData(struct IOUsbHWReq *iou, UWORD *lengthp, int desc_len, CONST_APTR desc)
+static int sl811hs_AppendData(struct sl811hs *sl, struct IOUsbHWReq *iou, UWORD *lengthp, int desc_len, CONST_APTR desc)
 {
     int err;
     int length = *lengthp;
