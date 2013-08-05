@@ -132,6 +132,7 @@ struct sl811hs {
         UBYTE pidep;    /* USB PID & Endpoint */
         UBYTE dev;
         UBYTE *data;
+        IPTR nstate;    /* Next IOU state */
         struct IOUsbHWReq *iou;
     } sl_Xfer[2];
 #if DEBUG
@@ -577,7 +578,8 @@ static BYTE sl811hs_XferStatus(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
             D(ebug("%p DATA%d IN SEQ %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
             D2(for (;;));
         } else {
-            D2(ebug("%p DATA%d ACK %d.%d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep)));
+            D2(ebug("%p DATA%d ACK %d.%d State %d => %d\n", iou, data, xfer->dev, SL811HS_HOSTID_EP_of(xfer->pidep), (int)(IPTR)iou->iouh_DriverPrivate1, (int)xfer->nstate));
+            iou->iouh_DriverPrivate1 = (APTR)xfer->nstate;
             if (!(xfer->ctl & SL811HS_HOSTCTRL_ISO))
                 sl811hs_ToggleFlip(sl, xfer->iou);
         }
@@ -810,8 +812,7 @@ state_done:
     xfer->iou = iou;
     xfer->data = data;
     xfer->dev = dev;
-
-    iou->iouh_DriverPrivate1 = (APTR)nstate;
+    xfer->nstate = nstate;
 
     sl811hs_XferIssue(sl, xfer);
     return PERFORM_ACTIVE;
