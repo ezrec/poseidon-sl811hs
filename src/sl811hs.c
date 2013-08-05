@@ -23,6 +23,87 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Theory of operation:
+ *
+ *  Packets (iou) move from:
+ *    sl711hs_BeginIO -> sl811hs_CommandTask -> sl_PacketsReady
+ *
+ *  They are then converted to an Xfer, and the endpoint is marked
+ *  as busy while the Xfer is allocated.
+ *
+ *  List movements:
+ *
+ *      --------------------- sl811hs_Timer -----------------------------
+ *     V                                                                 |
+ *    iou -> Xfer -> XfersActive -> (IRQ) -> XfersDone (NAK) -> timer.device /
+ *            ^          ^                             (ACK)
+ *            |           --- sl811hs_Xfer -------------/ \----> ReplyMsg(iou)
+ *            |                                           |
+ *            |                                           v
+ *             \--------------- sl811hs_Xfer -------- XfersFree
+ *
+ * sl811hs_BeginIO simply passes non-IOF_QUICK IORequests to the CommandTask
+ *
+ * The CommandTask waits for signals on its timer reply port,
+ *                           signals on its interrupt signal, or
+ *                           signals on its MsgPort
+ *    * If a timer reply:
+ *      * For each message in the timer reply port (an iou),
+ *        * Remove the iou 
+ *        * AddTail the iou to sl_PacketsReady
+ *    * If a interrupt signal:
+ *      * For each message in XfersDone
+ *        * Remove the Xfer
+ *        * Process the status, then AddTail the Xfer to XfersDone
+ *    * For each packet on the MsgPort, determine if we need to do
+ *      Root Hub emulation, or some other non-transfer operation
+ *       * If so, do the operation, and reply the message
+ *       * Otherwise, add it to the tail of the sl_PacketsReady queue
+ *    * While we have a packet in sl_PacketsReady:
+ *       * If the Endpoint is not busy:
+ *           * Allocate a Xfer for it from XfersFree
+ *           * If we can't allocate an Xfer from XfersFree for the iou, break
+ *           * Mark the Endpoint as busy
+ *           * Set the sl811hs registers for the Xfer
+ *           * Remove the packet from sl_PacketsReady
+ *           * Move Xfer to XfersActive
+ *    * For each Xfer in XfersDone:
+ *       * If the status was NAK, check for timeout/retry
+ *          * If waiting for a timeout, skip to next Xfer
+ *          * If flags & NAKTIMEOUT:
+ *             * If timed out:
+ *                * Mark endpoint as free
+ *                * reply with NAKTIMEOUT
+ *                * next Xfer
+ *             * Otherwise, schedule a timeout:
+ *                  * Move Xfer to XfersFree
+ *                  * Mark endpoint as not busy
+ *                  * AddTail packet to sl_PacketsReady
+ *                  * Schedule timeout
+ *                    * RemHead() Timeout from TimeoutsFree
+ *                    * If no free Timeouts:
+ *                        * AllocMem a new one
+ *                        * Copy timer request from strcut sl811hs to Timeout
+ *                    * Send Timeout as an IORequest to timer.device
+ *          * If !(flags & NAKTIMEOUT):
+ *             * If on the 3rd retry:
+ *                * Move Xfer to XfersFree
+ *                * Mark endpoint as free
+ *                * reply with NAK
+ *                * next Xfer
+ *             * Otherwise, schedule a timeout
+ *                  * Move Xfer to XfersFree
+ *                  * Mark endpoint as not busy
+ *                  * AddTail packet to sl_PacketsReady
+ *                  * Schedule timeout
+ *                    * RemHead() Timeout from TimeoutsFree
+ *                    * If no free Timeouts:
+ *                        * AllocMem a new one
+ *                        * Copy timer request from strcut sl811hs to Timeout
+ *                    * Send Timeout as an IORequest to timer.device
+ *
+ */
+
 #include <aros/debug.h>
 #include <aros/macros.h>
 
@@ -116,10 +197,10 @@ struct sl811hs {
 
     struct MinList sl_NakTimersFree;    /* Free NAK timers */
     struct MinList sl_PacketsDelayed;   /* Running NAK timers */
-    struct MinList sl_PacketsActive;     /* Packets waiting for a transaction */
-    struct MinList sl_XfersCompleted;    /* Xfers holding done packets */
+    struct MinList sl_PacketsReady;     /* Packets waiting for a transaction */
     struct MinList sl_XfersFree;        /* Xfers available */
     struct MinList sl_XfersActive;      /* Xfers in-flight */
+    struct MinList sl_XfersDone;        /* Xfers holding done packets */
 
     struct sl811hs_Xfer {
         struct MinNode node;
@@ -610,23 +691,17 @@ static BYTE sl811hs_XferComplete(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
     BYTE err;
     struct IOUsbHWReq *iou = xfer->iou;
 
-    if (xfer->pidep==0 || iou == NULL)
-        return 0;
-
-    err = sl811hs_XferStatus(sl, xfer);
-
-    if (err == IOERR_UNITBUSY) {
-        D(ebug("Requeue %p (DATA SEQ error)\n", iou));
-        return IOERR_UNITBUSY;
-    }
+    ASSERT(xfer->pidep != 0);
+    ASSERT(xfer->iou != NULL);
 
     if (!(sl->sl_PortStatus & (1 << PORT_ENABLE))) {
         err = iou->iouh_Req.io_Error = UHIOERR_USBOFFLINE;
+        return err;
     }
 
-    if (iou->iouh_Req.io_Error) {
-        iou->iouh_DriverPrivate1 = DRV1_STATE_DONE;
-    } else {
+    err = sl811hs_XferStatus(sl, xfer);
+
+    if (!err) {
         int i;
 
         switch (SL811HS_HOSTID_PID_of(xfer->pidep)) {
@@ -657,27 +732,22 @@ static BYTE sl811hs_XferComplete(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
 
     D2(ebug("%p Error %d\n", iou, err));
 
-    xfer->iou = NULL;
-    xfer->pidep = 0;
-
     return err;
 }
 
 enum sl811hs_Perform_e {
-    PERFORM_BUSY = -1,
     PERFORM_DONE = 0,
     PERFORM_ACTIVE = 1
 };
 
-enum sl811hs_Perform_e sl811hs_Perform(struct sl811hs *sl, struct IOUsbHWReq *iou)
+enum sl811hs_Perform_e sl811hs_Perform(struct sl811hs *sl, struct sl811hs_Xfer *xfer, struct IOUsbHWReq *iou)
 {
     int pid;
     UBYTE ctl, *data, dev, ep;
     int len;
     IPTR nstate;
-    struct sl811hs_Xfer *xfer;
 
-    D2(ebug("%p on %d.%d\n", iou, iou->iouh_DevAddr, iou->iouh_Endpoint));
+    D2(ebug("%p on %d.%d using Xfer %p\n", iou, iou->iouh_DevAddr, iou->iouh_Endpoint, xfer));
 
     /* Port gone? */
     if (!(sl->sl_PortStatus & (1 << PORT_ENABLE))) {
@@ -685,18 +755,10 @@ enum sl811hs_Perform_e sl811hs_Perform(struct sl811hs *sl, struct IOUsbHWReq *io
         return PERFORM_DONE;
     }
 
-    /* Allocate a transfer
-     */
-    xfer = (struct sl811hs_Xfer *)RemHead((struct List *)&sl->sl_XfersFree);
-
-    if (xfer == NULL) {
-        D(ebug("No Xfers free\n"));
-        return PERFORM_BUSY;
-    }
-
     D2(ebug("%p => Xfer[%d]\n", iou, xfer->ab/8));
 
     /* Reasonable defaults */
+    xfer->iou = iou;
     len = iou->iouh_Length - iou->iouh_Actual;
     data = (UBYTE *)iou->iouh_Data + iou->iouh_Actual;
     dev = iou->iouh_DevAddr;
@@ -794,9 +856,6 @@ setup_status:
         /* FALLTHROUGH */
     case DRV1_STATE_DONE:
 state_done:
-        /* Release the xfer */
-        xfer->iou = NULL;
-        AddTail((struct List *)&sl->sl_XfersFree, (struct Node *)xfer);
         D2(ebug("DONE: err = %d\n", iou->iouh_Req.io_Error));
         return PERFORM_DONE;
     }
@@ -1570,13 +1629,13 @@ static void sl811hs_CommandTask(void)
                     sigset = Wait(sigmask);
 
                     /* Add NAKed-but-want-to-retry packets to
-                     * the todo list.
+                     * the PacketsReady.
                      */
                     if (sigset & sigftime) {
                         while ((iou = sl811hs_GetNak(sl))) {
                             /* Move to the sl_PacketsReady list */
                             Remove((struct Node *)iou);
-                            AddTail((struct List *)&todo, (struct Node *)iou);
+                            AddTail((struct List *)&sl->sl_PacketsReady, (struct Node *)iou);
                         }
                     }
 
@@ -1594,13 +1653,17 @@ static void sl811hs_CommandTask(void)
                             struct sl811hs_Xfer *xfer;
 
                             Disable();
-                            xfer = (struct sl811hs_Xfer *)RemHead((struct List *)&sl->sl_XfersCompleted);
+                            xfer = (struct sl811hs_Xfer *)RemHead((struct List *)&sl->sl_XfersDone);
                             Enable();
                             if (!xfer)
                                 break;
                             err = sl811hs_XferComplete(sl, xfer);
-                            if (err != IOERR_UNITBUSY)
+
+                            if ((err || (sl811hs_Perform(sl, xfer, xfer->iou) != PERFORM_ACTIVE))) {
+                                struct IOUsbHWReq *iou = xfer->iou;
                                 AddTail((struct List *)&sl->sl_XfersFree, (struct Node *)xfer);
+                                sl811hs_ReplyOrRetry(sl, iou);
+                            }
                         }
                     }
 
@@ -1765,8 +1828,8 @@ static void sl811hs_CommandTask(void)
                          */
                         if (err == IOERR_UNITBUSY) {
                             iou->iouh_Req.io_Error = 0;
-                            AddTail((struct List *)&sl->sl_PacketsActive, (struct Node *)iou);
-                            D2(ebug("%p => PacketsActive\n", iou));
+                            AddTail((struct List *)&sl->sl_PacketsReady, (struct Node *)iou);
+                            D2(ebug("%p => PacketsReady\n", iou));
                         } else {
                             /* Retry or reply */
                             iou->iouh_Req.io_Error = err;
@@ -1775,35 +1838,30 @@ static void sl811hs_CommandTask(void)
                     }
 
                     /* Handle the next queued transaction(s) */
-                    D2(ebug("GetHead(sl_PacketsActive) = %p\n", GetHead((struct List *)&sl->sl_PacketsActive)));
-                    while ((iou = (struct IOUsbHWReq *)GetHead((struct List *)&sl->sl_PacketsActive))) {
+                    while ((iou = (struct IOUsbHWReq *)RemHead((struct List *)&sl->sl_PacketsReady))) {
+                        D2(ebug("PacketsReady => %p\n", iou));
                         /* If we're dead, or aborted, just remove it */
                         if (dead || (iou->iouh_Req.io_Flags & IOF_ABORT)) {
                             D2(ebug("%p Aborted\n", iou));
                             iou->iouh_Req.io_Error = IOERR_ABORTED;
+                            continue;
                         } else {
+                            struct sl811hs_Xfer *xfer;
                             enum sl811hs_Perform_e state;
 
-                            state = sl811hs_Perform(sl, iou);
-                            if (state == PERFORM_ACTIVE)
+                            xfer = (struct sl811hs_Xfer *)RemHead((struct List *)&sl->sl_XfersFree);
+                            if (!xfer) {
+                                D2(ebug("No free Xfers available\n"));
                                 break;
+                            }
 
-                            /* No ping-pongs free - try again later */
-                            if (state == PERFORM_BUSY)
-                                break;
-
-                            /* Otherwise, we are in state PERFORM_DONE */
+                            state = sl811hs_Perform(sl, xfer, iou);
+                            if (state == PERFORM_DONE) {
+                                AddTail((struct List *)&sl->sl_XfersFree, (struct Node *)xfer);
+                                sl811hs_ReplyOrRetry(sl, iou);
+                            }
                         }
-
-                        RemHead((struct List *)&sl->sl_PacketsActive);
-
-                        /* Return the message */
-                        D2(ebug("%p ReplyMsg(%d)\n", iou, iou->iouh_Req.io_Error));
-
-                        /* Retry or Reply */
-                        sl811hs_ReplyOrRetry(sl, iou);
                     }
-                    D2(ebug("GetHead(sl_PacketsActive) = %p\n", GetHead((struct List *)&sl->sl_PacketsActive)));
                 }
 
                 /* Shut down interrupts */
@@ -2046,6 +2104,8 @@ struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq)
     sl->sl_Data = (volatile UBYTE *)data;
     sl->sl_Irq = irq;
 
+    D2(sl->sl_Node.ln_Name = "UNKNOWN");
+
     /* Quick check to verify that the device is even there */
     resume(sl);
     if ((rb(sl, SL811HS_HWREVISION) & 0xfc) != SL811HS_HWREVISION_1_5) {
@@ -2056,10 +2116,10 @@ struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq)
 
     NEWLIST(&sl->sl_NakTimersFree);
     NEWLIST(&sl->sl_PacketsDelayed);
-    NEWLIST(&sl->sl_PacketsActive);
+    NEWLIST(&sl->sl_PacketsReady);
     NEWLIST(&sl->sl_XfersFree);
     NEWLIST(&sl->sl_XfersActive);
-    NEWLIST(&sl->sl_XfersCompleted);
+    NEWLIST(&sl->sl_XfersDone);
 
     sl->sl_Xfer[0].ab = 0;
     sl->sl_Xfer[0].base = 16;
