@@ -623,10 +623,10 @@ static BYTE sl811hs_XferStatus(struct sl811hs *sl, struct sl811hs_Xfer *xfer)
     struct IOUsbHWReq *iou = xfer->iou;
     struct IORequest *io = &iou->iouh_Req;
     UBYTE status;
-    D(int data);
+    int data;
 
     status = rb(sl, SL811HS_HOSTSTATUS + ab);
-    D(data = (xfer->ctl & SL811HS_HOSTCTRL_DATA) ? 1 : 0);
+    data = (xfer->ctl & SL811HS_HOSTCTRL_DATA) ? 1 : 0;
 
     D2(ebug("%p DATA%d PID_%s Status %02x\n", iou, data, PIDNAME(SL811HS_HOSTID_PID_of(xfer->pidep)), status));
    
@@ -2095,7 +2095,7 @@ struct sl811hs *sl811hs_Attach(IPTR addr, IPTR data, int irq)
 
 #if DEBUG < 1
     /* A tiny bit of sanity checking */
-    if (addr == NULL || data == NULL || addr == data)
+    if (addr == 0 || data == 0 || addr == data)
         return NULL;
 #endif
 
