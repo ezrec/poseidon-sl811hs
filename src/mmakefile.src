@@ -1,14 +1,15 @@
 # pathway.device build file, for AROS 
 # 
-include $(TOP)/config/make.cfg
+include $(SRCDIR)/config/aros.cfg
 
 #MM- workbench-c-m68k: workbench-c-m68k-sl811hs
 #MM- workbench-c-m68k-sl811hs: workbench-c-m68k-thylacine
 
+USER_LDFLAGS := -static
 USER_CFLAGS := -DADATE="\"$(shell date "+%d.%m.%Y")\"" \
                -D__EXEC_LIBAPI__=36
 
-USER_CFLAGS += -DDEBUG=1
+#USER_CFLAGS += -DDEBUG=1
 
 #MM- kernel-amiga-m68k-sl811hs: kernel-amiga-m68k-pathway
 #MM- kernel-amiga-m68k-sl811hs-quick: kernel-amiga-m68k-pathway-quick

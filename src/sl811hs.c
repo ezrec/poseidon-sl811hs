@@ -978,7 +978,9 @@ BYTE sl811hs_ResetUSB(struct sl811hs *sl, BOOL inReset)
         }
 
         /* Reset all endpoint's toggles */
-        memset(&sl->sl_DevEP_Toggle[0], 0, sizeof(sl->sl_DevEP_Toggle));
+        for (size_t i = 0; i < ARRAY_SIZE(sl->sl_DevEP_Toggle); i++) {
+            sl->sl_DevEP_Toggle[i] = 0;
+        }
     } else {
         /* NOTE - interrupts are still disabled! */
         wb(sl, SL811HS_CONTROL1, 0);
